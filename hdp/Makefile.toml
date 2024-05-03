@@ -1,0 +1,72 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+[tasks.clone-hdp-cairo]
+workspace = false
+description = "Clone the hdp-cairo repository. Ignores errors if the clone operation fails."
+ignore_errors = true
+command = "git"
+args = ["clone", "https://github.com/HerodotusDev/hdp-cairo.git"]
+
+[tasks.clone-hdp-cli]
+workspace = false
+description = "Clone the hdp-cairo repository. Ignores errors if the clone operation fails."
+ignore_errors = true
+command = "git"
+args = ["clone", "https://github.com/HerodotusDev/hdp.git"]
+
+[tasks.cairo-setup]
+workspace = false
+description = "Set up the Cairo environment by running the setup script."
+script = '''
+echo "Setting up the environment..."
+./script/setup_cairovm.sh
+'''
+
+[tasks.cli-setup]
+workspace = false
+description = "Set up the HDP binary to be used in the integration tests."
+script = '''
+cd hdp && cargo install --path cli -f && cd ..
+'''
+
+[tasks.cairo-compile]
+workspace = false
+description = "Compile the HDP Cairo program. This step requires the setup task to be completed first."
+script = '''
+echo "Compiling the program..."
+./script/compile.sh
+'''
+
+[tasks.integration-test]
+workspace = false
+description = "Run integration tests. Specify the folder name through the INTEGRATION_ARGS environment variable."
+env = { INTEGRATION_ARGS = "min_max_count" }
+script = '''
+echo "Running integration tests with arguments: $INTEGRATION_ARGS"
+./script/integration.sh $INTEGRATION_ARGS
+'''
+
+[tasks.reset-setup]
+workspace = false
+description = "Reset all setup and compiled files to their initial state."
+script = '''
+echo "Removing the setup and compiled files..."
+rm -rf ./compiled_cairo/hdp.json
+rm -rf ./hdp-cairo
+rm -rf venv
+rm -rf tools
+'''
+
+[tasks.run-full-flow]
+workspace = false
+description = "Execute the full integration test flow, including cloning, setup, compilation, and testing."
+dependencies = [
+    "clone-hdp-cairo",
+    "cairo-setup",
+    "cairo-compile",
+    "integration-test",
+]
+
+[config]
+unstable_features = ["CTRL_C_HANDLING"]
