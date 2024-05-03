@@ -1,0 +1,3 @@
+## MPT Verification Fixtures:
+
+This directory contains a set of MPT proofs that can be used to test the MPT implementation. The proofs are generated using the [MPT Proof Generator](../generate/README.md) and are stored in the `mpt/fixtures` directory. The autogen directory contains the proofs that are generated automatically by the generator. The resolved directory contains proofs that previously failed to resolve but have been fixed. The proofs can be run via the fuzzing script, which can be found in the `eth_essentials` repository.
