@@ -32,8 +32,7 @@ async fn main() -> Result<(), Error> {
     let rpc_url = env::var("RPC_URL_MAINNET").unwrap();
     let mut fetcher = Fetcher::new(&rpc_url)?;
 
-    let proofs = fetcher.generate_random_block_proofs(1).await?;
-    export_batch(proofs).unwrap();
+    fetcher.generate_random_block_proofs(100).await?;
 
     Ok(())
 }
@@ -71,6 +70,9 @@ pub struct MptProof {
     proof: Vec<Vec<u8>>,
     #[serde_as(as = "serde_with::hex::Hex")]
     key: Vec<u8>,
+    #[serde_as(as = "serde_with::hex::Hex")]
+    value_hash: Vec<u8>,
+    value_len: u64,
     kind: ProofType,
 }
 
@@ -100,13 +102,16 @@ impl Fetcher {
             let root = self.tx.get_root().unwrap();
 
             // ensure the proof is valid
-            self.tx.verify_proof(i, trie_proof.clone())?;
+            let result = self.tx.verify_proof(i, trie_proof.clone())?;
+            let (value_hash, value_len) = gen_payload_commitment(result);
 
             proofs.push(MptProof {
                 proof: trie_proof,
                 key: generate_key_from_index(i),
                 root,
                 kind: ProofType::TxProof,
+                value_hash,
+                value_len,
             });
         }
 
@@ -127,13 +132,16 @@ impl Fetcher {
             let root = self.receipt.get_root()?;
 
             // ensure the proof is valid
-            self.receipt.verify_proof(i, trie_proof.clone())?;
+            let result = self.receipt.verify_proof(i, trie_proof.clone())?;
+            let (value_hash, value_len) = gen_payload_commitment(result);
 
             proofs.push(MptProof {
                 proof: trie_proof,
                 key: generate_key_from_index(i),
                 root,
                 kind: ProofType::ReceiptProof,
+                value_hash,
+                value_len,
             });
         }
 
@@ -170,18 +178,26 @@ impl Fetcher {
                 .collect();
 
             // ensure the proof is valid
-            trie.verify_proof(
+            let result = trie.verify_proof(
                 H256::from_slice(block.header.state_root.as_slice()),
                 generate_key_from_address(address.0.as_slice()).as_slice(),
                 proof.clone(),
             )?;
 
-            proofs.push(MptProof {
-                proof,
-                key: generate_key_from_address(address.0.as_slice()),
-                root: block.header.state_root,
-                kind: ProofType::AccountProof,
-            });
+            match result {
+                Some(value) => {
+                    let (value_hash, value_len) = gen_payload_commitment(value.to_vec());
+                    proofs.push(MptProof {
+                        proof,
+                        key: generate_key_from_address(address.0.as_slice()),
+                        root: block.header.state_root,
+                        kind: ProofType::AccountProof,
+                        value_hash,
+                        value_len,
+                    });
+                }
+                _ => continue,
+            }
         }
 
         Ok(proofs)
@@ -213,13 +229,15 @@ impl Fetcher {
     async fn generate_random_block_proofs(
         &mut self,
         num_blocks: u32,
-    ) -> Result<Vec<MptProof>, Error> {
+    ) -> Result<(), Error> {
         let mut rng = rand::thread_rng();
-        let mut proofs = vec![];
-
+        let mut index = 0u32;
+        let i = &mut index;
+        
         // Fetch the current block number
         let current_block_number: u64 = self.provider.get_block_number().await?;
         for _ in 0..num_blocks {
+            let mut proofs = vec![];
             // As there is a bug in the underlying alloy library, we need to start with the byzantium hardfork. https://github.com/alloy-rs/alloy/issues/630
             let block_number = rng.gen_range(4370000..current_block_number);
             println!("Selected block: {:?}", block_number);
@@ -237,20 +255,33 @@ impl Fetcher {
 
             let account_proofs = self.get_account_proofs(block_number).await?;
             proofs.extend(account_proofs);
+
+            export_batch(proofs, i)?;
+
+            println!("indx: {:?}", i);
         }
 
-        Ok(proofs)
+        Ok(())
     }
 }
 
-fn export_batch(proofs: Vec<MptProof>) -> Result<(), Error> {
+fn gen_payload_commitment(value: Vec<u8>) -> (Vec<u8>, u64) {
+    let mut hasher = Keccak::v256();
+    hasher.update(value.as_ref());
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    (output.to_vec(), value.len() as u64)
+}
+
+fn export_batch(proofs: Vec<MptProof>, index: &mut u32) -> Result<(), Error> {
     let chunks = proofs.chunks(50);
 
-    for (i, chunk) in chunks.enumerate() {
+    for chunk in chunks {
         let serialized = serde_json::to_string_pretty(chunk).unwrap();
 
         // Write the JSON string to a file
-        let mut file = File::create(format!("../fixtures/autogen/mpt_proofs_{}.json", i)).unwrap();
+        let mut file = File::create(format!("../fixtures/autogen/mpt_proofs_{}.json", index)).unwrap();
+        *index += 1;
         file.write_all(serialized.as_bytes()).unwrap();
     }
 
